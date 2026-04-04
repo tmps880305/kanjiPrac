@@ -1,21 +1,16 @@
 import {useEffect, useMemo, useState} from "react";
-import JudgeRow from "./components/JudgeRow";
-import ProgressCard from "./components/ProgressCard";
-import Stat from "./components/Stat";
+import SessionHeader from "./components/SessionHeader";
+import StudyStage from "./components/StudyStage";
 import type {Card, DeckFile, SessionAnswer} from "./types/deck";
 import {
-    getDisplayMeaning,
-    getDisplayReading,
     loadDeckFromStorage,
     parseDeck,
     saveDeck,
     starterDeck,
 } from "./utils/deck";
 import {
-    getCardAccuracy,
     getDefaultReviewState,
     getReviewResultFromAnswer,
-    isCardMastered,
     loadProgress,
     saveProgress,
     STORAGE_PROGRESS_KEY,
@@ -207,142 +202,26 @@ export default function App() {
                     className="flex-1 space-y-6 px-4 pb-6 pt-4 md:px-5"
                     style={{paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 24px)"}}
                 >
-                    <header className="rounded-3xl bg-white shadow-sm p-5 md:p-6">
-                        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                            <div className="flex flex-wrap gap-2">
-                                <label
-                                    className="inline-flex cursor-pointer items-center rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50">
-                                    設定
-                                    <input
-                                        type="file"
-                                        accept="application/json"
-                                        className="hidden"
-                                    />
-                                </label>
+                    <SessionHeader
+                        totalCards={deck.cards.length}
+                        newCardsLeft={studyCounts.newCardsLeft}
+                        reviewCardsLeft={studyCounts.reviewCardsLeft}
+                        status={status}
+                        onReset={resetProgress}
+                    />
 
-                                <button
-                                    onClick={resetProgress}
-                                    className="ml-auto rounded-2xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:opacity-90"
-                                >
-                                    リセット
-                                </button>
-                            </div>
-                        </div>
-
-                        <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
-                            <Stat label="Cards" value={String(deck.cards.length)}/>
-                            <Stat label="New Left" value={String(studyCounts.newCardsLeft)}/>
-                            <Stat label="Review Due" value={String(studyCounts.reviewCardsLeft)}/>
-                            <Stat label="Status" value={status}/>
-                        </div>
-                    </header>
-
-                    <section className="rounded-3xl bg-white shadow-sm p-4 md:p-6">
-                        {!currentCard ? (
-                            <div
-                                className="rounded-3xl border border-dashed border-slate-300 p-12 text-center text-slate-500">
-                                No cards loaded.
-                            </div>
-                        ) : (
-                            <>
-                                <button
-                                    onClick={() => setRevealed((prev) => !prev)}
-                                    className="w-full rounded-3xl border border-slate-200 bg-slate-50 px-6 py-10 md:py-16 text-center hover:bg-slate-100"
-                                >
-                                    <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                                        {revealed ? "Back" : "Front"}
-                                    </div>
-
-                                    <div className="mt-6 text-5xl md:text-7xl font-semibold tracking-wide">
-                                        {currentCard.word}
-                                    </div>
-
-                                    {revealed && (
-                                        <div className="mt-8 space-y-3">
-                                            <div>
-                                                <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                                                    読み方
-                                                </div>
-                                                <div className="mt-1 text-2xl md:text-3xl font-medium">
-                                                    {getDisplayReading(currentCard)}
-                                                </div>
-                                            </div>
-
-                                            <div>
-                                                <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                                                    意味
-                                                </div>
-                                                <div className="mt-1 text-lg md:text-xl">
-                                                    {getDisplayMeaning(currentCard)}
-                                                </div>
-                                            </div>
-
-                                            {!!currentCard.jlpt_level_source && (
-                                                <div className="text-sm text-slate-500">
-                                                    Source: {currentCard.jlpt_level_source}
-                                                </div>
-                                            )}
-                                        </div>
-                                    )}
-                                </button>
-
-                                <div className="mt-6 rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <JudgeRow
-                                            title="読み方"
-                                            value={sessionAnswer.reading}
-                                            onSelect={() => updateAnswer("reading")}
-                                        />
-                                        <JudgeRow
-                                            title="意味"
-                                            value={sessionAnswer.meaning}
-                                            onSelect={() => updateAnswer("meaning")}
-                                        />
-                                    </div>
-                                </div>
-
-                                <div className="mt-6 flex items-center justify-between gap-3">
-                                    <button
-                                        onClick={() => setShowScores((prev) => !prev)}
-                                        className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                                    >
-                                        {showScores ? "スコア非表示" : "スコア表示"}
-                                    </button>
-                                    <button
-                                        onClick={handleNext}
-                                        className="w-32 rounded-2xl bg-blue-600 px-5 py-3 text-sm font-medium text-white hover:opacity-90"
-                                    >
-                                        {studyMode === "done" ? "完了" : "次へ"}
-                                    </button>
-                                </div>
-
-                                {showScores && (
-                                    <div className="mt-4 grid gap-3 md:grid-cols-2">
-                                        <ProgressCard
-                                            title="Card Progress"
-                                            score={currentState.score}
-                                            status={currentState.status}
-                                            accuracy={getCardAccuracy(currentState)}
-                                            streak={currentState.streak}
-                                            retryTokens={currentState.retryTokens}
-                                            reviewCount={currentState.reviewCount}
-                                            mastered={isCardMastered(currentState)}
-                                        />
-                                        <ProgressCard
-                                            title="Queue Signals"
-                                            score={currentState.recentWrongCount}
-                                            status={currentState.lastResult ?? "unseen"}
-                                            accuracy={getCardAccuracy(currentState)}
-                                            streak={currentState.streak}
-                                            retryTokens={currentState.retryTokens}
-                                            reviewCount={currentState.reviewCount}
-                                            mastered={currentState.retryTokens === 0}
-                                        />
-                                    </div>
-                                )}
-                            </>
-                        )}
-                    </section>
+                    <StudyStage
+                        currentCard={currentCard}
+                        revealed={revealed}
+                        onToggleReveal={() => setRevealed((prev) => !prev)}
+                        sessionAnswer={sessionAnswer}
+                        onToggleAnswer={updateAnswer}
+                        showScores={showScores}
+                        onToggleScores={() => setShowScores((prev) => !prev)}
+                        onNext={handleNext}
+                        studyMode={studyMode}
+                        currentState={currentState}
+                    />
                 </div>
             </div>
         </div>
