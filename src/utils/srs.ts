@@ -5,6 +5,8 @@ export const RECENT_CARD_HISTORY_LIMIT = 4;
 export const RECENT_CARD_COOLDOWN = 2;
 export const NEW_CARD_RATIO = 2;
 export const RETRY_CARD_RATIO = 1;
+export const MASTERED_REVISIT_AFTER_MS = 24 * 60 * 60 * 1000;
+export const MASTERED_REVISIT_BOOST_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type StudyStatus = "new" | "learning" | "reviewing" | "mastered";
 export type ReviewResult = "full" | "partial" | "wrong";
@@ -75,6 +77,13 @@ function getNextStatus(score: number, streak: number, reviewCount: number): Stud
 function getRecentCooldownIds(recentCardIds: string[]): Set<string> {
     const cooldownIds = recentCardIds.slice(-RECENT_CARD_COOLDOWN);
     return new Set(cooldownIds);
+}
+
+function canRevisitMasteredCard(progress: CardProgress, now: number): boolean {
+    if (progress.status !== "mastered") return true;
+    if (!progress.lastSeenAt) return false;
+
+    return now - progress.lastSeenAt >= MASTERED_REVISIT_AFTER_MS;
 }
 
 function isNewCard(cardId: string, progressMap: ProgressMap): boolean {
@@ -218,6 +227,13 @@ export function getCardWeight(
 ): number {
     const p = progress ?? createDefaultCardProgress();
 
+    if (p.status === "mastered") {
+        if (!canRevisitMasteredCard(p, now)) return 0;
+
+        const elapsed = p.lastSeenAt ? now - p.lastSeenAt : 0;
+        return elapsed >= MASTERED_REVISIT_BOOST_AFTER_MS ? 0.6 : 0.3;
+    }
+
     let base = 1;
     if (p.status === "new") base = 8;
     else if (p.status === "learning") base = 6;
@@ -275,13 +291,15 @@ export function pickWeightedRandomCard(
 ): string | null {
     if (cards.length === 0) return null;
 
-    const weighted = cards.map((card) => ({
-        id: card.id,
-        weight: getCardWeight(progressMap[card.id], now),
-    }));
+    const weighted = cards
+        .map((card) => ({
+            id: card.id,
+            weight: getCardWeight(progressMap[card.id], now),
+        }))
+        .filter((item) => item.weight > 0);
 
     const totalWeight = weighted.reduce((sum, item) => sum + item.weight, 0);
-    if (totalWeight <= 0) return cards[0].id;
+    if (totalWeight <= 0) return null;
 
     let r = Math.random() * totalWeight;
 
@@ -302,7 +320,11 @@ export function pickNextCardId(
     const recentCardIds = options.recentCardIds ?? [];
     const preferNewCards = options.preferNewCards ?? false;
     const cooldownIds = getRecentCooldownIds(recentCardIds);
-    const nonCooldownCards = cards.filter((card) => !cooldownIds.has(card.id));
+    const eligibleCards = cards.filter((card) => {
+        const progress = progressMap[card.id] ?? createDefaultCardProgress();
+        return canRevisitMasteredCard(progress, now);
+    });
+    const nonCooldownCards = eligibleCards.filter((card) => !cooldownIds.has(card.id));
     const spacedNewCards = filterNewCards(nonCooldownCards, progressMap);
     const spacedRetryCards = filterRetryCards(nonCooldownCards, progressMap);
 
@@ -321,19 +343,19 @@ export function pickNextCardId(
         return pickWeightedRandomCard(nonCooldownCards, progressMap, now);
     }
 
-    const fallbackNewCards = filterNewCards(cards, progressMap);
+    const fallbackNewCards = filterNewCards(eligibleCards, progressMap);
     if (preferNewCards && fallbackNewCards.length > 0) {
         return pickWeightedRandomCard(fallbackNewCards, progressMap, now);
     }
 
-    const retryFallback = pickFromRetryCards(filterRetryCards(cards, progressMap), progressMap);
+    const retryFallback = pickFromRetryCards(filterRetryCards(eligibleCards, progressMap), progressMap);
     if (retryFallback) return retryFallback;
 
     if (fallbackNewCards.length > 0) {
         return pickWeightedRandomCard(fallbackNewCards, progressMap, now);
     }
 
-    return pickWeightedRandomCard(cards, progressMap, now);
+    return pickWeightedRandomCard(eligibleCards, progressMap, now);
 }
 
 export function getStudyCounts(cards: CardLike[], progress: ProgressMap) {
