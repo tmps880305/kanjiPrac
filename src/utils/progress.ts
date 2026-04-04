@@ -1,30 +1,48 @@
-import type { ProgressMap, ReviewState, SessionAnswer } from "../types/deck";
+import type { SessionAnswer } from "../types/deck";
+import {
+    createDefaultCardProgress,
+    type CardProgress,
+    type ProgressMap,
+    type ReviewResult,
+} from "./srs";
 
 export const STORAGE_PROGRESS_KEY = "kanji-app.progress";
-export const STORAGE_INDEX_KEY = "kanji-app.currentIndex";
 
-export function getDefaultReviewState(): ReviewState {
-    return {
-        readingScore: 0,
-        meaningScore: 0,
-        readingCorrect: 0,
-        readingWrong: 0,
-        meaningCorrect: 0,
-        meaningWrong: 0,
-        lastSeenAt: null,
-    };
+export function getDefaultReviewState(): CardProgress {
+    return createDefaultCardProgress();
 }
 
-export function clamp(num: number, min: number, max: number) {
-    return Math.min(max, Math.max(min, num));
+function isCardProgress(value: unknown): value is CardProgress {
+    if (!value || typeof value !== "object") return false;
+
+    const candidate = value as Partial<CardProgress>;
+
+    return (
+        typeof candidate.score === "number" &&
+        typeof candidate.streak === "number" &&
+        typeof candidate.status === "string" &&
+        typeof candidate.retryTokens === "number" &&
+        typeof candidate.recentWrongCount === "number" &&
+        typeof candidate.reviewCount === "number" &&
+        (candidate.lastResult === null ||
+            candidate.lastResult === "full" ||
+            candidate.lastResult === "partial" ||
+            candidate.lastResult === "wrong") &&
+        (candidate.lastSeenAt === null || typeof candidate.lastSeenAt === "number")
+    );
 }
 
 export function loadProgress(): ProgressMap {
     try {
         const raw = localStorage.getItem(STORAGE_PROGRESS_KEY);
         if (!raw) return {};
+
         const parsed = JSON.parse(raw);
-        return parsed && typeof parsed === "object" ? parsed : {};
+        if (!parsed || typeof parsed !== "object") return {};
+
+        return Object.fromEntries(
+            Object.entries(parsed).filter((entry): entry is [string, CardProgress] => isCardProgress(entry[1]))
+        );
     } catch {
         return {};
     }
@@ -34,80 +52,19 @@ export function saveProgress(progress: ProgressMap) {
     localStorage.setItem(STORAGE_PROGRESS_KEY, JSON.stringify(progress));
 }
 
-export function loadCurrentIndex(): number {
-    const raw = localStorage.getItem(STORAGE_INDEX_KEY);
-    const value = Number(raw || 0);
-    return Number.isFinite(value) ? value : 0;
+export function getReviewResultFromAnswer(answers: SessionAnswer): ReviewResult {
+    const readingCorrect = answers.reading === true;
+    const meaningCorrect = answers.meaning === true;
+
+    if (readingCorrect && meaningCorrect) return "full";
+    if (!readingCorrect && !meaningCorrect) return "wrong";
+    return "partial";
 }
 
-export function saveCurrentIndex(index: number) {
-    localStorage.setItem(STORAGE_INDEX_KEY, String(index));
+export function getCardAccuracy(state: CardProgress): number {
+    return state.score / 100;
 }
 
-export function applyAnswer(
-    baseState: ReviewState,
-    answers: SessionAnswer
-): ReviewState {
-    const next = { ...baseState };
-
-    if (typeof answers.reading === "boolean") {
-        if (answers.reading) {
-            next.readingScore = clamp(next.readingScore + 1, 0, 8);
-            next.readingCorrect += 1;
-        } else {
-            next.readingScore = clamp(next.readingScore - 2, 0, 8);
-            next.readingWrong += 1;
-        }
-    }
-
-    if (typeof answers.meaning === "boolean") {
-        if (answers.meaning) {
-            next.meaningScore = clamp(next.meaningScore + 1, 0, 8);
-            next.meaningCorrect += 1;
-        } else {
-            next.meaningScore = clamp(next.meaningScore - 1, 0, 8);
-            next.meaningWrong += 1;
-        }
-    }
-
-    next.lastSeenAt = Date.now();
-    return next;
-}
-
-export function getReadingAttempts(state: ReviewState): number {
-    return state.readingCorrect + state.readingWrong;
-}
-
-export function getMeaningAttempts(state: ReviewState): number {
-    return state.meaningCorrect + state.meaningWrong;
-}
-
-export function getReadingAccuracy(state: ReviewState): number {
-    const total = getReadingAttempts(state);
-    return total ? state.readingCorrect / total : 0;
-}
-
-export function getMeaningAccuracy(state: ReviewState): number {
-    const total = getMeaningAttempts(state);
-    return total ? state.meaningCorrect / total : 0;
-}
-
-export function getWeightedAccuracy(state: ReviewState): number {
-    const readingAccuracy = getReadingAccuracy(state);
-    const meaningAccuracy = getMeaningAccuracy(state);
-
-    return readingAccuracy * 0.7 + meaningAccuracy * 0.3;
-}
-
-export function isCardMastered(state?: ReviewState): boolean {
-    if (!state) return false;
-
-    const readingAttempts = getReadingAttempts(state);
-    const meaningAttempts = getMeaningAttempts(state);
-
-    if (readingAttempts < 2 || meaningAttempts < 2) {
-        return false;
-    }
-
-    return getReadingAccuracy(state) >= 0.85 && getWeightedAccuracy(state) >= 0.85;
+export function isCardMastered(state?: CardProgress): boolean {
+    return state?.status === "mastered";
 }

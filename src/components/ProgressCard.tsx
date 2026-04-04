@@ -1,20 +1,24 @@
 type ProgressCardProps = {
     title: string;
     score: number;
-    correct: number;
-    wrong: number;
+    status: string;
     accuracy: number;
+    streak: number;
+    retryTokens: number;
+    reviewCount: number;
     mastered: boolean;
 };
 
 export default function ProgressCard({
-                                         title,
-                                         score,
-                                         correct,
-                                         wrong,
-                                         accuracy,
-                                         mastered,
-                                     }: ProgressCardProps) {
+    title,
+    score,
+    status,
+    accuracy,
+    streak,
+    retryTokens,
+    reviewCount,
+    mastered,
+}: ProgressCardProps) {
     return (
         <div className="rounded-2xl bg-slate-50 p-4">
             <div className="flex items-start justify-between gap-3">
@@ -31,10 +35,13 @@ export default function ProgressCard({
             </div>
             <div className="mt-2 text-2xl font-semibold">{score}</div>
             <div className="mt-2 text-sm text-slate-500">
-                Correct {correct} · Wrong {wrong}
+                Status {status}
             </div>
             <div className="mt-1 text-sm text-slate-500">
-                Accuracy {Math.round(accuracy * 100)}%
+                Accuracy {Math.round(accuracy * 100)}% · Reviews {reviewCount}
+            </div>
+            <div className="mt-1 text-sm text-slate-500">
+                Streak {streak} · Retry {retryTokens}
             </div>
         </div>
     );

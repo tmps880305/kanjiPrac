@@ -16,18 +16,6 @@ export type DeckFile = {
     cards: Card[];
 };
 
-export type ReviewState = {
-    readingScore: number;
-    meaningScore: number;
-    readingCorrect: number;
-    readingWrong: number;
-    meaningCorrect: number;
-    meaningWrong: number;
-    lastSeenAt: number | null;
-};
-
-export type ProgressMap = Record<string, ReviewState>;
-
 export type SessionAnswer = {
     reading?: boolean;
     meaning?: boolean;

@@ -1,7 +1,8 @@
 import {useEffect, useMemo, useState} from "react";
+import JudgeRow from "./components/JudgeRow";
 import ProgressCard from "./components/ProgressCard";
 import Stat from "./components/Stat";
-import type {Card, DeckFile, ProgressMap, SessionAnswer} from "./types/deck";
+import type {Card, DeckFile, SessionAnswer} from "./types/deck";
 import {
     getDisplayMeaning,
     getDisplayReading,
@@ -11,37 +12,37 @@ import {
     starterDeck,
 } from "./utils/deck";
 import {
-    applyAnswer,
+    getCardAccuracy,
     getDefaultReviewState,
-    getMeaningAccuracy,
-    getReadingAccuracy,
-    getWeightedAccuracy,
+    getReviewResultFromAnswer,
     isCardMastered,
-    loadCurrentIndex,
     loadProgress,
-    saveCurrentIndex,
     saveProgress,
     STORAGE_PROGRESS_KEY,
 } from "./utils/progress";
 import {
+    appendRecentCardId,
     applyStudyOrder,
     clearStudyOrder,
     createStudyOrder,
+    getCardQueueType,
     getNextCard,
     getStudyCounts,
     loadStudyOrder,
-    REVIEW_INTERVAL_NEW_CARDS,
     saveStudyOrder,
-} from "./utils/queue";
+    shouldPreferNewCards,
+    type ProgressMap,
+    updateProgressMap,
+} from "./utils/srs";
 
 export default function App() {
     const [deck, setDeck] = useState<DeckFile>(starterDeck);
     const [progress, setProgress] = useState<ProgressMap>({});
     const [studyOrder, setStudyOrder] = useState<string[]>([]);
+    const [recentCardIds, setRecentCardIds] = useState<string[]>([]);
+    const [queueHistory, setQueueHistory] = useState<Array<"new" | "retry" | "normal">>([]);
     const [currentCard, setCurrentCard] = useState<Card | null>(null);
-    const [currentIndex, setCurrentIndex] = useState(0);
-    const [newCardsSinceReview, setNewCardsSinceReview] = useState(0);
-    const [studyMode, setStudyMode] = useState<"new" | "review" | "done">("done");
+    const [studyMode, setStudyMode] = useState<"study" | "done">("done");
     const [revealed, setRevealed] = useState(false);
     const [showScores, setShowScores] = useState(false);
     const [sessionAnswer, setSessionAnswer] = useState<SessionAnswer>({});
@@ -62,12 +63,10 @@ export default function App() {
     useEffect(() => {
         // localStorage.removeItem("kanji-app.deck");
         // localStorage.removeItem("kanji-app.progress");
-        // localStorage.removeItem("kanji-app.currentIndex");
 
         async function init() {
             const localDeck = loadDeckFromStorage();
             const storedProgress = loadProgress();
-            const storedIndex = loadCurrentIndex();
 
             // 🔥 優先從 public 載入
             const publicDeck = await fetchDeckFromPublic();
@@ -81,14 +80,18 @@ export default function App() {
                 saveDeck(publicDeck);
             }
 
-            const nextStep = getNextCard(orderedCards, storedProgress, storedIndex, 0);
+            const nextStep = getNextCard(orderedCards, storedProgress, {
+                preferNewCards: shouldPreferNewCards([]),
+            });
 
             setDeck(finalDeck);
             setProgress(storedProgress);
             setStudyOrder(nextStudyOrder);
+            setRecentCardIds(nextStep.card ? [nextStep.card.id] : []);
+            setQueueHistory(
+                nextStep.card ? [getCardQueueType(nextStep.card.id, storedProgress)] : []
+            );
             setCurrentCard(nextStep.card);
-            setCurrentIndex(nextStep.nextNewIndex);
-            setNewCardsSinceReview(nextStep.nextNewCardsSinceReview);
             setStudyMode(nextStep.mode);
             setStatus(nextStep.mode === "done" ? "Session complete" : "Ready");
         }
@@ -99,10 +102,6 @@ export default function App() {
     useEffect(() => {
         saveProgress(progress);
     }, [progress]);
-
-    useEffect(() => {
-        saveCurrentIndex(currentIndex);
-    }, [currentIndex]);
 
     useEffect(() => {
         if (studyOrder.length) {
@@ -121,60 +120,58 @@ export default function App() {
     }, [currentCard, progress]);
 
     const studyCounts = useMemo(
-        () => getStudyCounts(orderedCards, progress, currentIndex),
-        [orderedCards, progress, currentIndex]
+        () => getStudyCounts(orderedCards, progress),
+        [orderedCards, progress]
     );
 
     function scheduleNextCard(
         nextDeck: DeckFile,
         nextProgress: ProgressMap,
-        nextNewIndex = currentIndex,
-        nextSinceReview = newCardsSinceReview,
-        nextStudyOrder = studyOrder
+        nextStudyOrder = studyOrder,
+        nextRecentCardIds = recentCardIds,
+        nextQueueHistory = queueHistory
     ) {
         const nextOrderedCards = applyStudyOrder(nextDeck.cards, nextStudyOrder);
-        const nextStep = getNextCard(
-            nextOrderedCards,
-            nextProgress,
-            nextNewIndex,
-            nextSinceReview
-        );
+        const preferNewCards = shouldPreferNewCards(nextQueueHistory);
+        const nextStep = getNextCard(nextOrderedCards, nextProgress, {
+            recentCardIds: nextRecentCardIds,
+            preferNewCards,
+        });
 
         setCurrentCard(nextStep.card);
-        setCurrentIndex(nextStep.nextNewIndex);
-        setNewCardsSinceReview(nextStep.nextNewCardsSinceReview);
         setStudyMode(nextStep.mode);
+        setRecentCardIds(nextStep.card ? appendRecentCardId(nextRecentCardIds, nextStep.card.id) : []);
+        setQueueHistory(
+            nextStep.card
+                ? [...nextQueueHistory, getCardQueueType(nextStep.card.id, nextProgress)].slice(-3)
+                : nextQueueHistory
+        );
 
         if (nextStep.mode === "done") {
-            setStatus("All cards currently mastered");
-        } else if (nextStep.mode === "review") {
-            setStatus("Reviewing missed cards");
+            setStatus("No cards available");
         } else {
-            setStatus(`Learning new cards · Review every ${REVIEW_INTERVAL_NEW_CARDS} new words`);
+            setStatus("Studying");
         }
     }
 
-    function updateAnswer(type: "reading" | "meaning", isCorrect: boolean) {
+    function updateAnswer(type: "reading" | "meaning") {
         setSessionAnswer((prev) => ({
             ...prev,
-            [type]: prev[type] === isCorrect ? undefined : isCorrect,
+            [type]: prev[type] === true ? undefined : true,
         }));
     }
 
     function handleNext() {
         if (!currentCard) return;
 
-        const baseState = progress[currentCard.id] ?? getDefaultReviewState();
-        const nextState = applyAnswer(baseState, {
-            reading: sessionAnswer.reading === true,
-            meaning: sessionAnswer.meaning === true,
-        });
-        const nextProgress = {...progress, [currentCard.id]: nextState};
+        const reviewResult = getReviewResultFromAnswer(sessionAnswer);
+        const nextProgress = updateProgressMap(progress, currentCard.id, reviewResult);
+        const nextRecentCardIds = appendRecentCardId(recentCardIds, currentCard.id);
 
         setProgress(nextProgress);
         setRevealed(false);
         setSessionAnswer({});
-        scheduleNextCard(deck, nextProgress);
+        scheduleNextCard(deck, nextProgress, studyOrder, nextRecentCardIds, queueHistory);
     }
 
     function resetProgress() {
@@ -183,10 +180,12 @@ export default function App() {
         clearStudyOrder();
         const nextStudyOrder = createStudyOrder(deck.cards);
         setStudyOrder(nextStudyOrder);
+        setRecentCardIds([]);
+        setQueueHistory([]);
         setRevealed(false);
         setSessionAnswer({});
         setStatus("Progress reset");
-        scheduleNextCard(deck, {}, 0, 0, nextStudyOrder);
+        scheduleNextCard(deck, {}, nextStudyOrder);
     }
 
     return (
@@ -289,33 +288,16 @@ export default function App() {
 
                                 <div className="mt-6 rounded-3xl border border-slate-200 bg-slate-50 p-4">
                                     <div className="grid grid-cols-2 gap-4">
-                                        <div className="rounded-2xl bg-white p-4">
-                                            <div className="text-sm font-medium text-slate-700">読み方</div>
-                                            <button
-                                                onClick={() => updateAnswer("reading", true)}
-                                                className={`mt-3 w-full rounded-2xl px-4 py-3 text-sm font-medium transition ${
-                                                    sessionAnswer.reading === true
-                                                        ? "bg-emerald-600 text-white"
-                                                        : "bg-slate-100 hover:bg-slate-200"
-                                                }`}
-                                            >
-                                                O
-                                            </button>
-                                        </div>
-
-                                        <div className="rounded-2xl bg-white p-4">
-                                            <div className="text-sm font-medium text-slate-700">意味</div>
-                                            <button
-                                                onClick={() => updateAnswer("meaning", true)}
-                                                className={`mt-3 w-full rounded-2xl px-4 py-3 text-sm font-medium transition ${
-                                                    sessionAnswer.meaning === true
-                                                        ? "bg-emerald-600 text-white"
-                                                        : "bg-slate-100 hover:bg-slate-200"
-                                                }`}
-                                            >
-                                                O
-                                            </button>
-                                        </div>
+                                        <JudgeRow
+                                            title="読み方"
+                                            value={sessionAnswer.reading}
+                                            onSelect={() => updateAnswer("reading")}
+                                        />
+                                        <JudgeRow
+                                            title="意味"
+                                            value={sessionAnswer.meaning}
+                                            onSelect={() => updateAnswer("meaning")}
+                                        />
                                     </div>
                                 </div>
 
@@ -330,27 +312,31 @@ export default function App() {
                                         onClick={handleNext}
                                         className="w-32 rounded-2xl bg-blue-600 px-5 py-3 text-sm font-medium text-white hover:opacity-90"
                                     >
-                                        {studyMode === "review" ? "確認" : "次へ"}
+                                        {studyMode === "done" ? "完了" : "次へ"}
                                     </button>
                                 </div>
 
                                 {showScores && (
                                     <div className="mt-4 grid gap-3 md:grid-cols-2">
                                         <ProgressCard
-                                            title="読み方スコア"
-                                            score={currentState.readingScore}
-                                            correct={currentState.readingCorrect}
-                                            wrong={currentState.readingWrong}
-                                            accuracy={getReadingAccuracy(currentState)}
+                                            title="Card Progress"
+                                            score={currentState.score}
+                                            status={currentState.status}
+                                            accuracy={getCardAccuracy(currentState)}
+                                            streak={currentState.streak}
+                                            retryTokens={currentState.retryTokens}
+                                            reviewCount={currentState.reviewCount}
                                             mastered={isCardMastered(currentState)}
                                         />
                                         <ProgressCard
-                                            title="意味スコア"
-                                            score={currentState.meaningScore}
-                                            correct={currentState.meaningCorrect}
-                                            wrong={currentState.meaningWrong}
-                                            accuracy={getMeaningAccuracy(currentState)}
-                                            mastered={getWeightedAccuracy(currentState) >= 0.85}
+                                            title="Queue Signals"
+                                            score={currentState.recentWrongCount}
+                                            status={currentState.lastResult ?? "unseen"}
+                                            accuracy={getCardAccuracy(currentState)}
+                                            streak={currentState.streak}
+                                            retryTokens={currentState.retryTokens}
+                                            reviewCount={currentState.reviewCount}
+                                            mastered={currentState.retryTokens === 0}
                                         />
                                     </div>
                                 )}
