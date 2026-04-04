@@ -73,3 +73,41 @@ export function applyAnswer(
     next.lastSeenAt = Date.now();
     return next;
 }
+
+export function getReadingAttempts(state: ReviewState): number {
+    return state.readingCorrect + state.readingWrong;
+}
+
+export function getMeaningAttempts(state: ReviewState): number {
+    return state.meaningCorrect + state.meaningWrong;
+}
+
+export function getReadingAccuracy(state: ReviewState): number {
+    const total = getReadingAttempts(state);
+    return total ? state.readingCorrect / total : 0;
+}
+
+export function getMeaningAccuracy(state: ReviewState): number {
+    const total = getMeaningAttempts(state);
+    return total ? state.meaningCorrect / total : 0;
+}
+
+export function getWeightedAccuracy(state: ReviewState): number {
+    const readingAccuracy = getReadingAccuracy(state);
+    const meaningAccuracy = getMeaningAccuracy(state);
+
+    return readingAccuracy * 0.7 + meaningAccuracy * 0.3;
+}
+
+export function isCardMastered(state?: ReviewState): boolean {
+    if (!state) return false;
+
+    const readingAttempts = getReadingAttempts(state);
+    const meaningAttempts = getMeaningAttempts(state);
+
+    if (readingAttempts < 2 || meaningAttempts < 2) {
+        return false;
+    }
+
+    return getReadingAccuracy(state) >= 0.85 && getWeightedAccuracy(state) >= 0.85;
+}
